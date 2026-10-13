@@ -1,0 +1,48 @@
+# RAG-Q&A-Project dependencies
+# Recommended Python version: 3.11 or 3.12
+#
+# Install from the project root:
+#   python -m pip install -r requirements.txt
+#
+# Ollama itself and the Qwen model are installed separately; they are not
+# installed by pip. For example:
+#   ollama pull qwen3:4b-instruct
+
+# API backend
+fastapi
+uvicorn[standard]
+python-multipart
+httpx
+
+# Streamlit frontend
+streamlit
+
+# LangChain / LangGraph orchestration
+langchain
+langchain-core
+langchain-community
+langchain-text-splitters
+langgraph
+langchain-ollama
+langchain-chroma
+
+# Vector database and embeddings
+chromadb
+sentence-transformers
+
+# Hybrid retrieval
+rank-bm25
+
+# PDF extraction
+pymupdf
+
+# Configuration and validation
+python-dotenv
+pydantic
+pydantic-settings
+
+# Optional reranking (install when implementing the reranking phase)
+# flashrank
+
+# Development and testing (optional)
+pytest
