@@ -39,19 +39,21 @@ class TestChromaService:
 
     def test_add_single_chunk(self, service):
         """Test adding a single chunk."""
+        doc_id = "550e8400-e29b-41d4-a716-446655440000"
         chunks = [
             {
                 "text": "This is the first chunk of text.",
                 "page": 1,
                 "file_name": "test.pdf",
                 "chunk_index": 0,
+                "doc_id": doc_id,
             }
         ]
 
         ids = service.add_chunks(chunks)
 
         assert len(ids) == 1
-        assert ids[0] == "test.pdf_1_0"
+        assert ids[0] == f"{doc_id}_p1_c0"
 
         # Verify in collection
         stats = service.get_collection_stats()

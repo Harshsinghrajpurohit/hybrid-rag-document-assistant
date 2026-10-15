@@ -52,10 +52,16 @@ class ChromaService:
 
         Args:
             chunks: List of dicts with keys:
-                - "text" (str): chunk text
+                - "text" (str): chunk text (never stored as metadata)
                 - "page" (int): page number
                 - "file_name" (str): source document name
                 - "chunk_index" (int): chunk sequence number
+                - "doc_id" (str, optional): upload UUID; enables collision-free
+                  chunk IDs ({doc_id}_p{page}_c{chunk_index}) and doc-level
+                  metadata. Without it, the legacy ID format
+                  ({file_name}_{page}_{chunk_index}) is used.
+                - any additional keys (e.g., "upload_time", "size_bytes") are
+                  stored as chunk metadata alongside the standard fields
 
         Returns:
             List of document IDs added to ChromaDB
@@ -75,18 +81,24 @@ class ChromaService:
         embeddings = self.embeddings_service.embed(texts)
 
         # Prepare IDs and metadata
-        ids = [
-            f"{chunk['file_name']}_{chunk['page']}_{chunk['chunk_index']}"
-            for chunk in chunks
-        ]
-        metadatas = [
-            {
-                "page": chunk["page"],
-                "file_name": chunk["file_name"],
-                "chunk_index": chunk["chunk_index"],
-            }
-            for chunk in chunks
-        ]
+        # New format (doc_id supplied): {doc_id}_p{page}_c{chunk_index}. The UUID
+        # contains no underscores, so positions stay unambiguous for any filename.
+        # Legacy format (no doc_id): {file_name}_{page}_{chunk_index}, kept for
+        # backward compatibility with existing callers and stored records.
+        ids = []
+        metadatas = []
+        for chunk in chunks:
+            if "doc_id" in chunk:
+                ids.append(
+                    f"{chunk['doc_id']}_p{chunk['page']}_c{chunk['chunk_index']}"
+                )
+            else:
+                ids.append(
+                    f"{chunk['file_name']}_{chunk['page']}_{chunk['chunk_index']}"
+                )
+            metadatas.append(
+                {key: value for key, value in chunk.items() if key != "text"}
+            )
 
         # Add to ChromaDB
         self.collection.add(
