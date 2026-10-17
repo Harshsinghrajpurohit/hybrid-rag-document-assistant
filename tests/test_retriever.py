@@ -87,6 +87,12 @@ class TestHybridRetriever:
                 "file_name": "ml.pdf",
                 "chunk_index": 0,
             },
+            {
+                "text": "Artificial intelligence powers modern applications.",
+                "page": 1,
+                "file_name": "ai.pdf",
+                "chunk_index": 0,
+            },
         ]
         chroma_service.add_chunks(chunks)
         retriever.rebuild_index()
@@ -278,13 +284,20 @@ class TestHybridRetriever:
         chroma_service.add_chunks(chunks)
         retriever.rebuild_index()
 
-        # Query that matches nothing
+        # Query that shares no terms with the corpus
         results = retriever.retrieve("xyzabc unrelated nonsense", n_results=5)
 
-        # Should return empty but valid structure
-        assert results["ids"] == []
-        assert results["documents"] == []
-        assert results["metadatas"] == []
+        # Contract: with no matching terms the BM25 leg contributes nothing
+        # (every bm25_score is 0), while dense k-NN search still returns its
+        # nearest neighbors (no relevance threshold), so the overall result
+        # list may be non-empty. Only the zero lexical contribution is asserted.
+        assert all(score <= 0 for score in results["bm25_scores"])
+
+        # Response structure stays consistent either way
+        n = len(results["ids"])
+        assert len(results["documents"]) == n
+        assert len(results["metadatas"]) == n
+        assert len(results["bm25_scores"]) == n
 
     def test_return_format(self, chroma_service, retriever):
         """Test that retrieve returns all expected fields."""

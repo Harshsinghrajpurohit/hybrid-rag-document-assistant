@@ -92,7 +92,8 @@ class HybridRetriever:
             top_k: Number of results to return
 
         Returns:
-            List of (document_id, bm25_score) tuples, sorted by score descending
+            List of (document_id, bm25_score) tuples, sorted by score descending.
+            Documents with a non-positive BM25 score are excluded.
         """
         if self.bm25_index is None or not self.doc_ids:
             return []
@@ -106,15 +107,44 @@ class HybridRetriever:
         # Get indices of top-k highest scores
         top_indices = np.argsort(scores)[-top_k:][::-1]
 
-        # Return (doc_id, score) for docs with score > 0
-        # Note: BM25 can return negative scores for very short docs
-        # In such cases, treat them as 0 but still include the document
+        # Only documents with a positive BM25 score carry keyword signal.
+        # Zero/negative scores (no matching terms, or non-positive idf in
+        # tiny corpora) are excluded so they cannot pollute RRF fusion or
+        # report meaningless scores to callers.
         results = []
         for idx in top_indices:
-            score = max(0, float(scores[idx]))  # Clamp negative scores to 0
+            score = float(scores[idx])
+            if score <= 0:
+                continue
             results.append((self.doc_ids[idx], score))
 
         return results
+
+    def _filter_bm25_by_where(
+        self, bm25_results: List[Tuple[str, float]], where: Dict
+    ) -> List[Tuple[str, float]]:
+        """
+        Keep only BM25 candidates whose IDs match a ChromaDB metadata filter.
+
+        Delegates where-clause evaluation to ChromaDB itself, so the BM25 leg
+        and the dense leg apply identical filter semantics. Reads the existing
+        chunk metadata only - no schema change and no persistent-data writes.
+
+        Args:
+            bm25_results: (document_id, bm25_score) tuples from _bm25_search
+            where: ChromaDB where filter (e.g. {"file_name": {"$eq": "..."}})
+
+        Returns:
+            Filtered (document_id, bm25_score) tuples in original BM25 order
+        """
+        matching_ids = set(
+            self.chroma.collection.get(where=where, include=["metadatas"])["ids"]
+        )
+        return [
+            (doc_id, score)
+            for doc_id, score in bm25_results
+            if doc_id in matching_ids
+        ]
 
     def _dense_search(
         self, query_text: str, top_k: int = 20, where: Optional[Dict[str, Any]] = None
@@ -159,20 +189,42 @@ class HybridRetriever:
             k: Constant in RRF formula (default 60, empirically robust)
 
         Returns:
-            List of (doc_id, rrf_score) sorted by RRF score descending
+            List of (doc_id, rrf_score) sorted by RRF score descending.
+            Ties (equal RRF scores) are ordered deterministically by:
+              (1) dense-search rank, best (lowest) first;
+              (2) BM25 rank, best (lowest) first;
+              (3) doc_id lexicographically (final stability guarantee).
+            RRF score remains the primary sort key, so relevance ordering
+            is preserved and dict insertion order no longer affects results.
         """
-        rrf_scores = {}
+        rrf_scores: Dict[str, float] = {}
+        bm25_ranks: Dict[str, int] = {}
+        dense_ranks: Dict[str, int] = {}
 
         # BM25 contributions
         for rank, (doc_id, _) in enumerate(bm25_results, 1):
+            bm25_ranks[doc_id] = rank
             rrf_scores[doc_id] = rrf_scores.get(doc_id, 0) + 1 / (k + rank)
 
         # Dense contributions (deduplicated)
         for rank, (doc_id, _) in enumerate(dense_results, 1):
+            dense_ranks[doc_id] = rank
             rrf_scores[doc_id] = rrf_scores.get(doc_id, 0) + 1 / (k + rank)
 
-        # Sort by RRF score descending
-        return sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)
+        # Deterministic ordering: RRF score descending (primary), then
+        # dense rank, then BM25 rank, then doc_id as the final tie-break.
+        def _sort_key(
+            item: Tuple[str, float]
+        ) -> Tuple[float, float, float, str]:
+            doc_id, score = item
+            return (
+                -score,
+                dense_ranks.get(doc_id, float("inf")),
+                bm25_ranks.get(doc_id, float("inf")),
+                doc_id,
+            )
+
+        return sorted(rrf_scores.items(), key=_sort_key)
 
     def retrieve(
         self,
@@ -186,7 +238,8 @@ class HybridRetriever:
         Args:
             query_text: User query
             n_results: Final number of results to return
-            where: Optional metadata filter (passed to dense search)
+            where: Optional metadata filter (applied to both the dense
+                search and the BM25 candidates before fusion)
 
         Returns:
             Dict with keys:
@@ -207,6 +260,10 @@ class HybridRetriever:
 
         # Parallel-style fetching (sequential for now, could be async)
         bm25_results = self._bm25_search(query_text, top_k=fetch_k)
+        if where is not None:
+            # Apply the same metadata filter to the BM25 leg as to the
+            # dense leg, so filtered-out documents cannot re-enter via fusion.
+            bm25_results = self._filter_bm25_by_where(bm25_results, where)
         dense_results = self._dense_search(query_text, top_k=fetch_k, where=where)
 
         # Fuse rankings using RRF
