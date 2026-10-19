@@ -152,3 +152,45 @@ class InvalidRequestError(APIException):
             status_code=400,
             request_id=request_id or str(uuid.uuid4())
         )
+
+
+class UnsupportedFormatError(APIException):
+    """Raised when the uploaded file extension is not supported."""
+
+    def __init__(self, file_extension: str, request_id: Optional[str] = None):
+        detail = (
+            f"Unsupported file format '{file_extension}'. "
+            "Supported formats: PDF, DOCX, TXT, MD, CSV, XLSX"
+        )
+        super().__init__(
+            error_type="UNSUPPORTED_FORMAT",
+            detail=detail,
+            status_code=400,
+            request_id=request_id or str(uuid.uuid4())
+        )
+
+
+class EmptyFileError(APIException):
+    """Raised when the uploaded file has zero bytes."""
+
+    def __init__(self, request_id: Optional[str] = None):
+        detail = "Uploaded file is empty"
+        super().__init__(
+            error_type="EMPTY_FILE",
+            detail=detail,
+            status_code=400,
+            request_id=request_id or str(uuid.uuid4())
+        )
+
+
+class ExtractionFailedError(APIException):
+    """Raised when document content cannot be extracted or parsed."""
+
+    def __init__(self, reason: str = "Document content could not be extracted",
+                 request_id: Optional[str] = None):
+        super().__init__(
+            error_type="EXTRACTION_FAILED",
+            detail=reason,
+            status_code=422,
+            request_id=request_id or str(uuid.uuid4())
+        )

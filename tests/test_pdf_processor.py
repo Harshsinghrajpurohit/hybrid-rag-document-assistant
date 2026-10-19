@@ -75,10 +75,14 @@ class TestPDFExtraction:
                 c.drawString(100, 710, "More sample text here.")
 
                 c.save()
-                yield tmp.name
+                pdf_path = tmp.name
 
-                # Cleanup
-                Path(tmp.name).unlink()
+            # The `with` block has exited, closing the temp-file handle so
+            # unlink works on Windows.
+            yield pdf_path
+
+            # Cleanup
+            Path(pdf_path).unlink()
         except ImportError:
             pytest.skip("reportlab not installed; skipping PDF extraction test")
 
@@ -140,8 +144,12 @@ class TestProcessPDF:
                 c.showPage()
                 c.drawString(100, 750, "Page 2: " + "Consectetur adipiscing elit. " * 50)
                 c.save()
-                yield tmp.name
-                Path(tmp.name).unlink()
+                pdf_path = tmp.name
+
+            # The `with` block has exited, closing the temp-file handle so
+            # unlink works on Windows.
+            yield pdf_path
+            Path(pdf_path).unlink()
         except ImportError:
             pytest.skip("reportlab not installed")
 

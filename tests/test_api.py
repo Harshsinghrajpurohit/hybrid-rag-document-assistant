@@ -11,6 +11,9 @@ import json
 import shutil
 import tempfile
 
+import pytest
+from unittest.mock import Mock, patch
+
 from fastapi.testclient import TestClient
 from backend.app.main import app
 from backend.app.api.documents import router as documents_router
@@ -33,6 +36,19 @@ def make_valid_pdf(
     return pdf_bytes
 
 
+@pytest.fixture
+def mock_embed():
+    """Deterministic embeddings for any text - no Ollama required."""
+    mock_resp = Mock()
+    mock_resp.json.return_value = {"embeddings": [[0.01] * 768]}
+    mock_resp.raise_for_status = Mock()
+    with patch(
+        "backend.app.services.embeddings.requests.post", return_value=mock_resp
+    ) as m:
+        yield m
+
+
+@pytest.mark.usefixtures("mock_embed")
 class TestAPIFlow(unittest.TestCase):
     def setUp(self):
         """Set up test client with an isolated temporary ChromaDB directory."""
@@ -87,11 +103,11 @@ class TestAPIFlow(unittest.TestCase):
         self.assertEqual(data["size_bytes"], len(pdf_content))
 
     def test_upload_invalid_mime_type(self):
-        """Test upload with invalid file type."""
-        files = {"file": ("test.txt", io.BytesIO(b"text content"), "text/plain")}
+        """Test upload with an unsupported file extension."""
+        files = {"file": ("test.pptx", io.BytesIO(b"not a real pptx"), "application/vnd.ms-powerpoint")}
         response = self.client.post("/documents/upload", files=files)
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.json()["error"], "INVALID_MIME_TYPE")
+        self.assertEqual(response.json()["error"], "UNSUPPORTED_FORMAT")
 
     def test_upload_file_too_large(self):
         """Test upload with file exceeding size limit."""

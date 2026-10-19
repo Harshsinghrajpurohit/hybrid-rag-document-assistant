@@ -53,7 +53,8 @@ class ChromaService:
         Args:
             chunks: List of dicts with keys:
                 - "text" (str): chunk text (never stored as metadata)
-                - "page" (int): page number
+                - "page" (int, optional): page number (PDFs only; omit for
+                  page-less formats such as docx/txt/md/csv/xlsx)
                 - "file_name" (str): source document name
                 - "chunk_index" (int): chunk sequence number
                 - "doc_id" (str, optional): upload UUID; enables collision-free
@@ -83,19 +84,33 @@ class ChromaService:
         # Prepare IDs and metadata
         # New format (doc_id supplied): {doc_id}_p{page}_c{chunk_index}. The UUID
         # contains no underscores, so positions stay unambiguous for any filename.
-        # Legacy format (no doc_id): {file_name}_{page}_{chunk_index}, kept for
-        # backward compatibility with existing callers and stored records.
+        # Page-less formats (docx/txt/md/csv/xlsx) use
+        # {doc_id}_s{segment}_c{chunk_index} instead. Legacy format (no doc_id):
+        # {file_name}_{page}_{chunk_index}, kept for backward compatibility with
+        # existing callers and stored records.
         ids = []
         metadatas = []
         for chunk in chunks:
             if "doc_id" in chunk:
-                ids.append(
-                    f"{chunk['doc_id']}_p{chunk['page']}_c{chunk['chunk_index']}"
-                )
+                if "page" in chunk:
+                    ids.append(
+                        f"{chunk['doc_id']}_p{chunk['page']}_c{chunk['chunk_index']}"
+                    )
+                else:
+                    segment = chunk.get("segment", 0)
+                    ids.append(
+                        f"{chunk['doc_id']}_s{segment}_c{chunk['chunk_index']}"
+                    )
             else:
-                ids.append(
-                    f"{chunk['file_name']}_{chunk['page']}_{chunk['chunk_index']}"
-                )
+                if "page" in chunk:
+                    ids.append(
+                        f"{chunk['file_name']}_{chunk['page']}_{chunk['chunk_index']}"
+                    )
+                else:
+                    segment = chunk.get("segment", 0)
+                    ids.append(
+                        f"{chunk['file_name']}_{segment}_{chunk['chunk_index']}"
+                    )
             metadatas.append(
                 {key: value for key, value in chunk.items() if key != "text"}
             )

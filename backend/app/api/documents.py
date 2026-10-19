@@ -5,6 +5,7 @@ FastAPI router for document operations: upload, list, and delete.
 import os
 import tempfile
 import uuid
+from pathlib import Path
 
 from fastapi import APIRouter, File, Request, UploadFile
 
@@ -12,10 +13,12 @@ from ..exceptions import (
     DeleteFailedError,
     DeletePartialError,
     DocumentNotFoundError,
+    EmptyFileError,
+    ExtractionFailedError,
     FileTooLargeError,
     InternalServerError,
-    InvalidMimeTypeError,
     PdfCorruptedError,
+    UnsupportedFormatError,
 )
 from ..models import (
     DeleteResponse,
@@ -26,7 +29,7 @@ from ..models import (
     generate_request_id,
     get_current_timestamp,
 )
-from ..services.pdf_processor import process_pdf
+from ..services.document_processor import SUPPORTED_EXTENSIONS, process_document
 
 router = APIRouter()
 
@@ -40,7 +43,7 @@ async def upload_document(
     Upload and process a PDF document.
 
     Args:
-        file: Uploaded PDF file (must be PDF format)
+        file: Uploaded document (PDF, DOCX, TXT, MD, CSV, or XLSX)
         request: FastAPI request for generating request_id
 
     Returns:
@@ -49,28 +52,43 @@ async def upload_document(
     # Generate request ID for logging correlation
     request_id = generate_request_id()
 
-    # Validate file type
-    if file.content_type != "application/pdf":
-        raise InvalidMimeTypeError()
+    # Validate file format by extension (browser content-type headers are
+    # unreliable for Office formats)
+    file_name = file.filename or ""
+    ext = Path(file_name).suffix.lower()
+    if ext not in SUPPORTED_EXTENSIONS:
+        raise UnsupportedFormatError(ext or "unknown")
 
     # Check file size (50 MB limit)
     file_size = await file.read()
     file_size_bytes = len(file_size)
+    if file_size_bytes == 0:
+        raise EmptyFileError()
     if file_size_bytes > 50 * 1024 * 1024:  # 50 MB
         raise FileTooLargeError(file_size_bytes)
+
+    # Light content sanity checks (magic bytes) where practical
+    if ext == ".pdf" and not file_size.startswith(b"%PDF"):
+        raise PdfCorruptedError()
+    if ext in (".docx", ".xlsx") and not file_size.startswith(b"PK"):
+        raise ExtractionFailedError(
+            "File does not look like a valid DOCX/XLSX (missing ZIP signature)"
+        )
 
     # Reset file stream
     file.file.seek(0)
 
     try:
-        # Save uploaded PDF to a temporary file (process_pdf requires a file path)
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
+        # Save upload to a temporary file (processors require a file path)
+        with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp_file:
             tmp_file.write(file_size)
             tmp_path = tmp_file.name
 
         try:
-            # Process PDF: extract text into chunks with metadata
-            chunks = process_pdf(tmp_path)
+            # Extract text into chunks with metadata (format-aware)
+            chunks = process_document(tmp_path, original_filename=file_name)
+        except ExtractionFailedError:
+            raise
         except ValueError:
             raise PdfCorruptedError()
         finally:
@@ -78,7 +96,6 @@ async def upload_document(
 
         # Create document metadata
         doc_id = str(uuid.uuid4())
-        file_name = file.filename
         upload_time = get_current_timestamp()
         size_bytes = file_size_bytes
         num_chunks = len(chunks)
@@ -87,6 +104,7 @@ async def upload_document(
         metadata = DocumentMetadata(
             doc_id=doc_id,
             file_name=file_name,
+            file_type=ext.lstrip("."),
             upload_time=upload_time,
             size_bytes=size_bytes,
             num_chunks=num_chunks,
@@ -103,6 +121,7 @@ async def upload_document(
         for chunk in chunks:
             chunk["doc_id"] = doc_id
             chunk["file_name"] = file_name
+            chunk["file_type"] = ext.lstrip(".")
             chunk["upload_time"] = upload_time
             chunk["size_bytes"] = size_bytes
 
@@ -111,6 +130,7 @@ async def upload_document(
         return DocumentResponse(
             doc_id=doc_id,
             file_name=file_name,
+            file_type=ext.lstrip("."),
             num_chunks=num_chunks,
             upload_time=upload_time,
             size_bytes=size_bytes
@@ -168,6 +188,7 @@ async def list_documents():
     for chunk_doc_id in doc_order:
         metadatas = grouped[chunk_doc_id]
         file_names = {m.get("file_name") for m in metadatas}
+        file_types = {m.get("file_type") for m in metadatas}
         upload_times = {m.get("upload_time") for m in metadatas}
         size_bytes_values = {m.get("size_bytes") for m in metadatas}
 
@@ -175,6 +196,7 @@ async def list_documents():
         # instead of returning misleading values.
         if (
             len(file_names) != 1
+            or len(file_types) != 1
             or len(upload_times) != 1
             or len(size_bytes_values) != 1
         ):
@@ -183,6 +205,7 @@ async def list_documents():
         documents.append(Document(
             doc_id=chunk_doc_id,
             file_name=file_names.pop(),
+            file_type=file_types.pop(),
             num_chunks=len(metadatas),
             upload_time=upload_times.pop(),
             size_bytes=size_bytes_values.pop(),

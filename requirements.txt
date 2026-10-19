@@ -1,48 +1,60 @@
 # RAG-Q&A-Project dependencies
-# Recommended Python version: 3.11 or 3.12
+# Validated Python version: 3.13.0 (also expected to work on 3.11 and 3.12)
 #
 # Install from the project root:
 #   python -m pip install -r requirements.txt
 #
-# Ollama itself and the Qwen model are installed separately; they are not
-# installed by pip. For example:
+# Ollama and its models are installed separately; they are not installed by
+# pip. Both models below are required by the application's default settings
+# (see backend/app/config.py):
 #   ollama pull qwen3:4b-instruct
+#   ollama pull nomic-embed-text:latest
 
 # API backend
 fastapi
 uvicorn[standard]
 python-multipart
-httpx
 
-# Streamlit frontend
-streamlit
-
-# LangChain / LangGraph orchestration
-langchain
-langchain-core
-langchain-community
-langchain-text-splitters
-langgraph
-langchain-ollama
-langchain-chroma
-
-# Vector database and embeddings
+# Vector database, embeddings, hybrid retrieval
 chromadb
-sentence-transformers
-
-# Hybrid retrieval
+numpy
 rank-bm25
 
-# PDF extraction
+# Ollama HTTP API clients (LLM answer generation + embeddings)
+requests
+
+# PDF extraction and chunking
 pymupdf
+langchain-text-splitters
+
+# Office document extraction
+python-docx
+openpyxl
+
+# Frontend
+streamlit
 
 # Configuration and validation
 python-dotenv
 pydantic
-pydantic-settings
 
-# Optional reranking (install when implementing the reranking phase)
-# flashrank
-
-# Development and testing (optional)
+# Development and testing
 pytest
+# httpx is required by FastAPI's TestClient (starlette) used in the test suite
+httpx
+
+# --- Planned / optional (commented out; no code needs them today) ---
+
+# Local-embedding path via sentence-transformers (uncomment when implementing
+# the local-embeddings phase; the backend currently embeds via Ollama only)
+# sentence-transformers
+
+# Generates the PDF fixtures for tests/test_pdf_processor.py; without it,
+# 4 tests skip. Installing it on Windows enables those 4 tests, but a
+# pre-existing temp-file teardown issue in the fixtures currently causes
+# 4 cleanup errors there, so the suite is not fully green on Windows
+# until that test bug is fixed.
+# reportlab
+
+# Optional reranking (uncomment when implementing the reranking phase)
+# flashrank
